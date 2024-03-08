@@ -32,27 +32,27 @@ De lo contrario, se mantiene en hold.
 
 def trading_decision(rsi, k, date):
     if rsi.loc[date] < 30 and k.loc[date] < 20:
-        return 'buy'
+        return 'Comprar'
     elif rsi.loc[date] > 70 and k.loc[date] > 80:
-        return 'sell'
+        return 'Vender'
     else:
-        return 'hold'
+        return 'Esperar'
     
 def decision_rsi(rsi, date):
     if rsi.loc[date] < 30:
-        return 'buy'
+        return 'Comprar'
     elif rsi.loc[date] > 70:
-        return 'sell'
+        return 'Vender'
     else:
-        return 'hold'
+        return 'Esperar'
 
 def decision_stochastic(k, date):
     if k.loc[date] < 20:
-        return 'buy'
+        return 'Comprar'
     elif k.loc[date] > 80:
-        return 'sell'
+        return 'Vender'
     else:
-        return 'hold'
+        return 'Esperar'
 
 # Streamlit widgets para recibir inputs
 start_date = st.sidebar.date_input('Fecha de inicio', pd.to_datetime('2023-01-01'))

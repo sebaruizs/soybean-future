@@ -30,26 +30,26 @@ Si el RSI es mayor que 70 y el Estocástico es mayor que 80, entonces es una se�
 De lo contrario, se mantiene en hold.
 '''
 
-def trading_decision(rsi, k):
-    if rsi.iloc[-1] < 30 and k.iloc[-1] < 20:
+def trading_decision(rsi, k, date):
+    if rsi.loc[date] < 30 and k.loc[date] < 20:
         return 'buy'
-    elif rsi.iloc[-1] > 70 and k.iloc[-1] > 80:
+    elif rsi.loc[date] > 70 and k.loc[date] > 80:
         return 'sell'
     else:
         return 'hold'
     
-def decision_rsi(rsi):
-    if rsi.iloc[-1] < 30:
+def decision_rsi(rsi, date):
+    if rsi.loc[date] < 30:
         return 'buy'
-    elif rsi.iloc[-1] > 70:
+    elif rsi.loc[date] > 70:
         return 'sell'
     else:
         return 'hold'
 
-def decision_stochastic(k):
-    if k.iloc[-1] < 20:
+def decision_stochastic(k, date):
+    if k.loc[date] < 20:
         return 'buy'
-    elif k.iloc[-1] > 80:
+    elif k.loc[date] > 80:
         return 'sell'
     else:
         return 'hold'
@@ -59,6 +59,11 @@ start_date = st.sidebar.date_input('Fecha de inicio', pd.to_datetime('2023-01-01
 start_date_minus_30 = start_date - pd.Timedelta(days=150)
 end_date = st.sidebar.date_input('Fecha de fin', pd.to_datetime('today'))
 ticker = st.sidebar.text_input('Ticker', 'ZS=F')
+decision_date = st.sidebar.date_input('Fecha de decisión', (pd.to_datetime('today') - pd.Timedelta(days=1)))
+decision_date = decision_date.strftime("%Y-%m-%d")
+# decision_date = (pd.to_datetime('today') - pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+
+
 
 # Cargar datos usando yfinance (o usar df si ya está pre-cargado)
 def load_data(ticker, start_date, end_date):
@@ -136,15 +141,23 @@ axes[1].legend()
 
 st.pyplot(fig2)
 
-# Otras decisiones...
-decision_rsi = decision_rsi(df['RSI'])
-decision_stochastic = decision_stochastic(df['Estocastico'])
-st.write(f'Decisión basada en RSI: {decision_rsi}')
-st.write(f'Decisión basada en Estocástico: {decision_stochastic}')
 
-# Tomar decisiones de trading y mostrarlas
-decision_ambos = trading_decision(df['RSI'], df['Estocastico'])
-st.write(f'Decisión basada en ambos: {decision_ambos}')
+# Tomar la decisión basada en la fecha de decisión.
+  
+if decision_date in df.index:
+    decision_ambos = trading_decision(df['RSI'], df['Estocastico'], decision_date)
+    decision_rsi_val = decision_rsi(df['RSI'], decision_date)
+    decision_stochastic_val = decision_stochastic(df['Estocastico'], decision_date)
+else:
+    decision_ambos = 'Fecha fuera de rango'
+    decision_rsi_val = 'Fecha fuera de rango'
+    decision_stochastic_val = 'Fecha fuera de rango'
+
+st.write(f'Decisión basada en RSI para {decision_date}: {decision_rsi_val}')
+st.write(f'Decisión basada en Estocástico para {decision_date}: {decision_stochastic_val}')
+st.write(f'Decisión basada en ambos para {decision_date}: {decision_ambos}')
+
+
 
 # Para ejecutar tu app Streamlit, guárdala como `app.py` y ejecútala con `streamlit run app.py`
 

@@ -24,11 +24,6 @@ def compute_stochastic_oscillator(data, window=14):
     return k
 
 # Función para tomar decisiones de trading basadas en RSI y Estocástico
-'''
-Si el RSI es menor que 30 y el Estocástico es menor que 20, entonces es una señal de compra. \n
-Si el RSI es mayor que 70 y el Estocástico es mayor que 80, entonces es una señal de venta. \n
-De lo contrario, se mantiene en hold.
-'''
 
 def trading_decision(rsi, k, date):
     if rsi.loc[date] < 30 and k.loc[date] < 20:
@@ -53,6 +48,15 @@ def decision_stochastic(k, date):
         return 'Vender'
     else:
         return 'Esperar'
+
+# Titulo y descripción    
+st.title('Análisis técnico de la soja')
+st.markdown("""
+Si el RSI es menor que 30 y el Estocástico es menor que 20, entonces es una señal de compra. <br>
+Si el RSI es mayor que 70 y el Estocástico es mayor que 80, entonces es una señal de venta. <br>
+De lo contrario, se mantiene en hold.
+""", unsafe_allow_html=True)
+
 
 # Streamlit widgets para recibir inputs
 start_date = st.sidebar.date_input('Fecha de inicio', pd.to_datetime('2023-01-01'))
@@ -153,11 +157,92 @@ else:
     decision_rsi_val = 'Fecha fuera de rango'
     decision_stochastic_val = 'Fecha fuera de rango'
 
-st.write(f'Decisión basada en RSI para {decision_date}: {decision_rsi_val}')
-st.write(f'Decisión basada en Estocástico para {decision_date}: {decision_stochastic_val}')
-st.write(f'Decisión basada en ambos para {decision_date}: {decision_ambos}')
+
+st.info(f'Decisión basada en RSI para {decision_date}: {decision_rsi_val}')
+st.info(f'Decisión basada en Estocástico para {decision_date}: {decision_stochastic_val}')
+st.info(f'Decisión basada en ambos para {decision_date}: {decision_ambos}')
+
+######################################
+# Análisis de noticias
+
+# Extraer el link relacionado a soja de economies.com
+import requests
+from bs4 import BeautifulSoup
+
+base_url = 'https://www.economies.com'
+url = 'https://www.economies.com/commodities/analysis?cursor=eyJBLmFydGljbGVfaWQiOjEwNzQ3NywiX3BvaW50c1RvTmV4dEl0ZW1zIjp0cnVlfQ'
+
+headers = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+}
+
+response = requests.get(url, headers=headers)
+
+links = []
+
+if response.status_code == 200:
+    soup = BeautifulSoup(response.content, 'html.parser')
+
+    for link in soup.find_all('a', href=True):
+        if 'soja' in link.text.lower() or 'soybean' in link.text.lower() or 'soja' in link['href'].lower() or 'soybean' in link['href'].lower():
+            full_link = base_url + link['href']
+            links.append(full_link)
+else:
+    print(f'Error accessing page: {response.status_code}')
+
+
+# Ahora que tenemos los links, podemos acceder a cada noticia y extraer el contenido
+url_noticia = links[0]
+response_noticia = requests.get(url_noticia, headers=headers)
+image_url = None
+h1_texts = []
+p_texts = []
+
+if response_noticia.status_code == 200:
+    soup_noticia = BeautifulSoup(response_noticia.content, 'html.parser')
+
+    # Buscamos todos los elementos h1 en el contenido de la respuesta
+    for h1 in soup_noticia.find_all('h1'):
+        # Añadimos el texto de cada elemento h1 a la lista
+        h1_texts.append(h1.get_text())
+    
+    # Buscamos todos los elementos p1 en el contenido de la respuesta
+    for p in soup_noticia.find_all('p'):
+        # Añadimos el texto de cada elemento h1 a la lista
+        p_texts.append(p.get_text())
+    
+   
+
+    # Buscamos todos los elementos <a> y luego buscamos un elemento <img> dentro de ellos
+    for a_tag in soup_noticia.find_all('a', attrs={"@click": True}):
+        img_tag = a_tag.find('img')
+        if img_tag and 'src' in img_tag.attrs:
+            image_url = img_tag['src']
+            break  # Suponiendo que solo necesitas la primera imagen que coincida
+
+else:
+    print(f'Error accessing page: {response_noticia.status_code}')
+
+# Limpiamos el contenido de la noticia
+title = h1_texts[0].strip()
+texto = [p.strip() for p in p_texts if p.strip()]
+texto = ' '.join(texto)
+
+# Mostramos la noticia
+st.subheader(f'Noticia: {title}')
+st.image(image_url, caption='Análisis tecnico de la soja', use_column_width=True)
+st.write(f'{texto}')
+st.write(f'Link: {url_noticia}')
+
+# st.title('Esto es title')
+# st.header('Esto es header')
+# st.subheader('Esto es subheader')
+# st.write('Esto es write')
+# st.markdown('Esto es markdown')
+# st.success('Esto es success')
+# st.info('Esto es info')
 
 
 
-# Para ejecutar tu app Streamlit, guárdala como `app.py` y ejecútala con `streamlit run app.py`
+
 

@@ -170,7 +170,7 @@ import requests
 from bs4 import BeautifulSoup
 
 base_url = 'https://www.economies.com'
-url = 'https://www.economies.com/commodities/analysis?cursor=eyJBLmFydGljbGVfaWQiOjEwNzQ3NywiX3BvaW50c1RvTmV4dEl0ZW1zIjp0cnVlfQ'
+url = 'https://www.economies.com/commodities/analysis'
 
 headers = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'

@@ -1,165 +1,248 @@
+import streamlit as st
 import pandas as pd
 import numpy as np
-import streamlit as st
-
-# Ruta del archivo Excel
-archivo_excel = 'Rendimientos_bonos_internacionales_USD.xlsx'
-
-# Crear un diccionario vacío para almacenar los DataFrames
-dfs = {}
-
-# Cargar el archivo Excel
-xls = pd.ExcelFile(archivo_excel)
-
-# Iterar sobre cada hoja del archivo
-for hoja in xls.sheet_names:
-    # Leer cada hoja y almacenarla en el diccionario
-    dfs[hoja] = pd.read_excel(xls, hoja, header=0)
-
-
-# Se detectaron errores en las fechas
-# - 31 de septiembre
-# - Fecha con parentesis
-# - Fecha que escribieron 023 en vez de 2023
-
-for nombre, df in dfs.items():
-    if nombre == 'Vencimientos':
-        continue
-    else:
-        try:
-            # Intentar convertir la columna 'Fecha' a datetime
-            df['Fecha'] = pd.to_datetime(df['Fecha'], format= 'mixed', dayfirst=True)
-        except Exception as e:
-            # Imprimir el nombre de la hoja y el error si algo sale mal
-            print(f"Error al procesar la hoja '{nombre}': {e}")
-
-
-# Inicializar el DataFrame final con el primer DataFrame del diccionario
-df_final = None
-df_vencimientos = dfs['Vencimientos']
-dfs.pop('Vencimientos')
-
-# Iterar sobre cada DataFrame y unirlos
-for nombre, df in dfs.items():
-    if df_final is None:
-        df_final = df
-    else:
-        # Unir utilizando la columna 'Fecha' como referencia y haciendo una unión 'outer'
-        df_final = pd.merge(df_final, df, on='Fecha', how='outer', suffixes=('', f'_{nombre}'))
-
-
-df_final.set_index('Fecha', inplace=True)
-df_final.sort_index(inplace=True)
-
-# Eliminar filas que no tienen al menos 3 valores no nulos
-df_limpio = df_final.dropna(thresh=3)
-
-
-# Fecha que buscamos analizar de los bonos
-fecha_a_analizar = st.sidebar.date_input('Fecha de análisis', df_limpio.index[-1])
-fecha_a_analizar = pd.Timestamp(fecha_a_analizar)
-
-
-# Extraer la fila correspondiente 
-fila_analisis = df_limpio.loc[fecha_a_analizar]
-
-# Transponer la fila para convertirla en una columna
-df_analisis = fila_analisis.transpose().to_frame()
-
-# Renombramos la columna de rendimiento
-df_analisis.columns = ['Yield']
-
-# Extraer los vencimientos
-df_analisis['Maturity'] = pd.to_datetime(df_vencimientos['Fecha de vencimiento'], dayfirst= True) - pd.to_datetime(fecha_a_analizar, dayfirst= True)
-
-# Calculamos el maturity en años (restamos las fechas y dividimos por 360)
-diferencia = pd.to_datetime(df_vencimientos['Fecha de vencimiento'], dayfirst=True) - pd.to_datetime(fecha_a_analizar, dayfirst=True)
-diferencia_anos = diferencia.dt.days / 360
-df_analisis['Maturity'] = diferencia_anos.values
-
-# Convertir el rendimiento a porcentaje
-df_analisis['Yield'] = df_analisis['Yield'] / 100
-
-
-#############################################
-# Aplicamos el modelo de Nelson-Siegel
-from scipy.optimize import fmin
 import matplotlib.pyplot as plt
-import matplotlib.pyplot as plt
-import matplotlib.markers as mk
-import matplotlib.ticker as mtick
+from sklearn.metrics import mean_squared_error
+import yfinance as yf
 
-dd = df_analisis.copy()
-dd.sort_values('Maturity', inplace=True)
-df = dd.copy()
+# Función para calcular el Índice de Fuerza Relativa (RSI)
+def compute_rsi(data, window=14):
+    diff = data.diff(1).dropna()
+    gain = (diff.where(diff > 0, 0)).rolling(window=window).mean()
+    loss = (-diff.where(diff < 0, 0)).rolling(window=window).mean()
 
-sf = df.copy()
-sf = sf.dropna()
-sf1 = sf.copy()
-sf1['Y'] = round(sf['Yield']*100,4)
-sf = sf.style.format({'Maturity': '{:,.2f}'.format,'Yield': '{:,.4%}'})
+    rs = gain / loss
+    rsi = 100 - (100 / (1 + rs))
+    return rsi
 
-
-β0 = 0.01
-β1 = 0.01
-β2 = 0.01
-λ = 1.00
-
-
-df['NS'] =(β0)+(β1*((1-np.exp(-df['Maturity']/λ))/(df['Maturity']/λ)))+(β2*((((1-np.exp(-df['Maturity']/λ))/(df['Maturity']/λ)))-(np.exp(-df['Maturity']/λ))))
-
-df['Residual'] =  (df['Yield'] - df['NS'])**2
-df22 = df[['Maturity','Yield','NS','Residual']]  
-
-
-def myval(c):
-    df = dd.copy()
-    df['NS'] =(c[0])+(c[1]*((1-np.exp(-df['Maturity']/c[3]))/(df['Maturity']/c[3])))+(c[2]*((((1-np.exp(-df['Maturity']/c[3]))/(df['Maturity']/c[3])))-(np.exp(-df['Maturity']/c[3]))))
-    df['Residual'] =  (df['Yield'] - df['NS'])**2
-    val = np.sum(df['Residual'])
-    print("[β0, β1, β2, λ]=",c,", SUM:", val)
-    return(val)
+# Función para calcular el Oscilador Estocástico
+def compute_stochastic_oscillator(data, window=14):
+    low_min = data['Low'].rolling(window=window).min()
+    high_max = data['High'].rolling(window=window).max()
     
-c = fmin(myval, [0.01, 0.00, -0.01, 1.0])
+    k = 100 * ((data['Close'] - low_min) / (high_max - low_min))
+    return k
+
+# Función para tomar decisiones de trading basadas en RSI y Estocástico
+
+def trading_decision(rsi, k, date):
+    if rsi.loc[date] < 30 and k.loc[date] < 20:
+        return 'Comprar'
+    elif rsi.loc[date] > 70 and k.loc[date] > 80:
+        return 'Vender'
+    else:
+        return 'Esperar'
+    
+def decision_rsi(rsi, date):
+    if rsi.loc[date] < 30:
+        return 'Comprar'
+    elif rsi.loc[date] > 70:
+        return 'Vender'
+    else:
+        return 'Esperar'
+
+def decision_stochastic(k, date):
+    if k.loc[date] < 20:
+        return 'Comprar'
+    elif k.loc[date] > 80:
+        return 'Vender'
+    else:
+        return 'Esperar'
+
+# Titulo y descripción    
+st.title('Análisis técnico de la soja')
+st.markdown("""
+Si el RSI es menor que 30 y el Estocástico es menor que 20, entonces es una señal de compra. <br>
+Si el RSI es mayor que 70 y el Estocástico es mayor que 80, entonces es una señal de venta. <br>
+De lo contrario, se mantiene en hold.
+""", unsafe_allow_html=True)
 
 
-β0 = c[0]
-β1 = c[1]
-β2 = c[2]
-λ = c[3]
+# Streamlit widgets para recibir inputs
+start_date = st.sidebar.date_input('Fecha de inicio', pd.to_datetime('2023-01-01'))
+start_date_minus_30 = start_date - pd.Timedelta(days=150)
+end_date = st.sidebar.date_input('Fecha de fin', pd.to_datetime('today'))
+ticker = st.sidebar.text_input('Ticker', 'ZS=F')
+decision_date = st.sidebar.date_input('Fecha de decisión', (pd.to_datetime('today') - pd.Timedelta(days=1)))
+decision_date = decision_date.strftime("%Y-%m-%d")
+# decision_date = (pd.to_datetime('today') - pd.Timedelta(days=1)).strftime("%Y-%m-%d")
 
 
-df = df.copy()
-df['NS'] =(β0)+(β1*((1-np.exp(-df['Maturity']/λ))/(df['Maturity']/λ)))+(β2*((((1-np.exp(-df['Maturity']/λ))/(df['Maturity']/λ)))-(np.exp(-df['Maturity']/λ))))
-sf4 = df.copy()
-sf5 = sf4.copy()
-sf5['Y'] = round(sf4['Yield']*100,4)
-sf5['N'] = round(sf4['NS']*100,4)
-sf4 = sf4.style.format({'Maturity': '{:,.2f}'.format,'Yield': '{:,.2%}', 'NS': '{:,.2%}'})
-M0 = 0.00
-M1 = 3.50
-import matplotlib.pyplot as plt
-import matplotlib.markers as mk
-import matplotlib.ticker as mtick
-fontsize=15
-fig = plt.figure(figsize=(13,7))
-plt.title("USD international bonds",fontsize=fontsize)
-fig.patch.set_facecolor('white')
-X = sf5["Maturity"]
-Y = sf5["Y"]
-x = sf5["Maturity"]
-y = sf5["N"]
-plt.plot(x, y, color="orange", label="Svensson model")
-plt.scatter(x, y, marker="o", c="orange")
-plt.scatter(X, Y, marker="o", c="blue")
-plt.xlabel('Maturity (years)',fontsize=fontsize)
-plt.ylabel('Yield (%)',fontsize=fontsize)
-plt.legend(loc="lower right")
-plt.grid()
+
+# Cargar datos usando yfinance (o usar df si ya está pre-cargado)
+def load_data(ticker, start_date, end_date):
+    data = yf.download(ticker, start=start_date, end=end_date, progress=False)
+    return data
+
+df = load_data(ticker, start_date_minus_30, end_date)
+
+################
+# Procesamiento de datos y nuevas variables
+
+# Calculamos la media móvil simple de 30 días para el precio de cierre.
+df['SMA_30'] = df['Close'].rolling(window=30).mean()
+
+# Calculamos la media móvil simple de 100 días para el precio de cierre.
+df['SMA_100'] = df['Close'].rolling(window=100).mean()
+
+# Agregamos una columna que indica el cruce
+df['Crossover'] = np.where(df['SMA_30'] > df['SMA_100'], 'Alcista', 'Bajista')
+
+# Encontramos los índices donde ocurren los cruces
+crossover_indices = df['Crossover'].ne(df['Crossover'].shift())
+
+# Filtramos el DataFrame para mostrar solo las fechas con cruces
+crossover_df = df[crossover_indices]
+
+# Calcular RSI y Estocástico
+df['RSI'] = compute_rsi(df['Close'])
+df['Estocastico'] = compute_stochastic_oscillator(df)
+
+df = df[df.index >= pd.to_datetime(start_date)]
+
+# Asumiendo que has añadido las columnas 'SMA_30', 'SMA_100', etc. a tu DataFrame 'df'
+
+# Crear figuras con Matplotlib para mostrar en Streamlit
+fig, ax = plt.subplots()
+ax.plot(df['Close'], label='Precio de Cierre')
+ax.plot(df['SMA_30'], label='Media Móvil 30 Días')
+ax.plot(df['SMA_100'], label='Media Móvil 100 Días')
+
+# Añadimos los puntos de intersección
+for date, row in crossover_df.iterrows():
+    ax.plot(date, row['SMA_30'], 'ro' if row['Crossover'] == 'Alcista' else 'go')  # 'ro' = red circle, 'go' = green circle
 
 
-st.title('Yield Curve')
+ax.set_title('Análisis técnico de los precios de la soja')
+ax.set_xlabel('Fecha')
+ax.set_ylabel('Precio de cierre')
+ax.legend()
+
+# Mostrar gráficos con Streamlit
 st.pyplot(fig)
+
+# Plot
+fig2, axes = plt.subplots(nrows=2, ncols=1, figsize=(14, 10), sharex=True)
+
+# Precio de cierre y RSI
+axes[0].plot(df['Close'], label='Precio de Cierre', color='blue')
+axes[0].set_title('Precio de Cierre y Índice de Fuerza Relativa (RSI)')
+axes[0].legend()
+
+# Añadir RSI al gráfico de precios de cierre
+ax2 = axes[0].twinx()
+ax2.plot(df['RSI'], label='RSI', color='green')
+ax2.axhline(70, color='red', linestyle='--', linewidth=1)
+ax2.axhline(30, color='red', linestyle='--', linewidth=1)
+ax2.legend()
+
+# Oscilador Estocástico
+axes[1].plot(df['Estocastico'], label='%Estocastico', color='orange')
+axes[1].axhline(80, color='red', linestyle='--', linewidth=1)
+axes[1].axhline(20, color='red', linestyle='--', linewidth=1)
+axes[1].set_title('Oscilador Estocástico')
+axes[1].legend()
+
+st.pyplot(fig2)
+
+
+# Tomar la decisión basada en la fecha de decisión.
+  
+if decision_date in df.index:
+    decision_ambos = trading_decision(df['RSI'], df['Estocastico'], decision_date)
+    decision_rsi_val = decision_rsi(df['RSI'], decision_date)
+    decision_stochastic_val = decision_stochastic(df['Estocastico'], decision_date)
+else:
+    decision_ambos = 'Fecha fuera de rango'
+    decision_rsi_val = 'Fecha fuera de rango'
+    decision_stochastic_val = 'Fecha fuera de rango'
+
+
+st.info(f'Decisión basada en RSI para {decision_date}: {decision_rsi_val}')
+st.info(f'Decisión basada en Estocástico para {decision_date}: {decision_stochastic_val}')
+st.info(f'Decisión basada en ambos para {decision_date}: {decision_ambos}')
+
+######################################
+# Análisis de noticias
+
+# Extraer el link relacionado a soja de economies.com
+import requests
+from bs4 import BeautifulSoup
+
+base_url = 'https://www.economies.com'
+url = 'https://www.economies.com/commodities/analysis?cursor=eyJBLmFydGljbGVfaWQiOjEwNzQ3NywiX3BvaW50c1RvTmV4dEl0ZW1zIjp0cnVlfQ'
+
+headers = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+}
+
+response = requests.get(url, headers=headers)
+
+links = []
+
+if response.status_code == 200:
+    soup = BeautifulSoup(response.content, 'html.parser')
+
+    for link in soup.find_all('a', href=True):
+        if 'soja' in link.text.lower() or 'soybean' in link.text.lower() or 'soja' in link['href'].lower() or 'soybean' in link['href'].lower():
+            full_link = base_url + link['href']
+            links.append(full_link)
+else:
+    print(f'Error accessing page: {response.status_code}')
+
+
+# Ahora que tenemos los links, podemos acceder a cada noticia y extraer el contenido
+url_noticia = links[0]
+response_noticia = requests.get(url_noticia, headers=headers)
+image_url = None
+h1_texts = []
+p_texts = []
+
+if response_noticia.status_code == 200:
+    soup_noticia = BeautifulSoup(response_noticia.content, 'html.parser')
+
+    # Buscamos todos los elementos h1 en el contenido de la respuesta
+    for h1 in soup_noticia.find_all('h1'):
+        # Añadimos el texto de cada elemento h1 a la lista
+        h1_texts.append(h1.get_text())
+    
+    # Buscamos todos los elementos p1 en el contenido de la respuesta
+    for p in soup_noticia.find_all('p'):
+        # Añadimos el texto de cada elemento h1 a la lista
+        p_texts.append(p.get_text())
+    
+   
+
+    # Buscamos todos los elementos <a> y luego buscamos un elemento <img> dentro de ellos
+    for a_tag in soup_noticia.find_all('a', attrs={"@click": True}):
+        img_tag = a_tag.find('img')
+        if img_tag and 'src' in img_tag.attrs:
+            image_url = img_tag['src']
+            break  # Suponiendo que solo necesitas la primera imagen que coincida
+
+else:
+    print(f'Error accessing page: {response_noticia.status_code}')
+
+# Limpiamos el contenido de la noticia
+title = h1_texts[0].strip()
+texto = [p.strip() for p in p_texts if p.strip()]
+texto = ' '.join(texto)
+
+# Mostramos la noticia
+st.subheader(f'Noticia: {title}')
+st.image(image_url, caption='Análisis tecnico de la soja', use_column_width=True)
+st.write(f'{texto}')
+st.write(f'Link: {url_noticia}')
+
+# st.title('Esto es title')
+# st.header('Esto es header')
+# st.subheader('Esto es subheader')
+# st.write('Esto es write')
+# st.markdown('Esto es markdown')
+# st.success('Esto es success')
+# st.info('Esto es info')
+
+
 
 
 
